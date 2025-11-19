@@ -174,8 +174,13 @@ class TFTPServerHandler(socketserver.DatagramRequestHandler):
             return self.finish_state(peer_state)
 
         try:
-            peer_state.file = open(peer_state.filepath, 'rb')
-            peer_state.filesize = os.stat(peer_state.filepath)[stat.ST_SIZE]
+            if (
+                hasattr(self.server, "filename_handler")
+                and callable(self.server.filename_handler)
+            ):
+                filename = self.server.filename_handler(peer_state.filepath)
+            peer_state.file = open(filename or peer_state.filepath, 'rb')
+            peer_state.filesize = os.stat(filename or peer_state.filepath)[stat.ST_SIZE]
             peer_state.packetnum = 0
             peer_state.state = state.STATE_SEND
 
@@ -514,7 +519,8 @@ class TFTPServerGarbageCollector(threading.Thread):
 
 class TFTPServer(object):
     def __init__(self, host_ip, root, port=_PTFTPD_DEFAULT_PORT,
-                 strict_rfc1350=False, notification_callbacks=None):
+                 strict_rfc1350=False, notification_callbacks=None,
+                 filename_handler=None):
 
         if notification_callbacks is None:
             notification_callbacks = {}
@@ -523,12 +529,13 @@ class TFTPServer(object):
             host_ip, root, port, strict_rfc1350
         self.client_registry = {}
 
-        if not os.path.isdir(self.root):
+        if filename_handler is None and not os.path.isdir(self.root):
             raise TFTPServerConfigurationError(
                 'The specified TFTP root does not exist')
 
         self.server = socketserver.UDPServer((self.host_ip, port),
                                              TFTPServerHandler)
+        self.server.filename_handler = filename_handler 
         self.server.root = self.root
         self.server.strict_rfc1350 = self.strict_rfc1350
         self.server.clients = self.client_registry
