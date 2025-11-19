@@ -59,13 +59,19 @@ _PTFTPD_DEFAULT_PATH = '/tftpboot'
 # this is a reasonable default we can use to keep things going.
 _DEFAULT_UDP_DATAGRAM_SIZE = 508
 
+_cached_datagram_size = None
 def get_max_udp_datagram_size():
     """Retrieve the maximum UDP datagram size allowed by the system."""
+    if _cached_datagram_size is not None:
+        return _cached_datagram_size
     try:
         val = subprocess.check_output(['sysctl', '-n', 'net.inet.udp.maxdgram'])
-        return int(val)
     except subprocess.CalledProcessError:
-        return _DEFAULT_UDP_DATAGRAM_SIZE
+        val = subprocess.check_output(['sysctl', '-n', 'net.core.rmem_max'])
+    except subprocess.CalledProcessError:
+        val = _DEFAULT_UDP_DATAGRAM_SIZE
+    _cached_datagram_size = int(val)
+    return int(val)
 
 class TFTPServerConfigurationError(Exception):
     """The configuration of the pTFTPd is incorrect."""
