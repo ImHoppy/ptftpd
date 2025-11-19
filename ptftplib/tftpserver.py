@@ -483,9 +483,12 @@ class TFTPServerGarbageCollector(threading.Thread):
     """
 
     def __init__(self, clients):
-        threading.Thread.__init__(self)
+        try:
+            threading.Thread.__init__(self, daemon=True)
+        except TypeError:
+            threading.Thread.__init__(self)
+            self.setDaemon(True)
         self.clients = clients
-        self.setDaemon(True)
 
     def run(self):
         while True:
