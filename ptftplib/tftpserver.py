@@ -31,12 +31,10 @@ interval option from RFC2349.
 """
 
 import errno
-import fcntl
 import logging
 import os
 import socket
 import stat
-import struct
 import subprocess
 import sys
 import threading
@@ -60,27 +58,6 @@ _PTFTPD_DEFAULT_PATH = '/tftpboot'
 # When we can't figure out the UDP datagram size with sysctl,
 # this is a reasonable default we can use to keep things going.
 _DEFAULT_UDP_DATAGRAM_SIZE = 508
-
-
-def get_ip_config_for_iface(iface):
-    """Retrieve and return the IP address/netmask of the given interface.
-
-    Constants from https://github.com/torvalds/linux/blob/v6.8/include/uapi/linux/sockios.h#L62
-    """
-    SIOCGIFADDR = 0x8915
-    SIOCGIFNETMASK = 0x891B
-    iface_b = struct.pack("256s", iface.encode()[:15])
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        ip = socket.inet_ntoa(fcntl.ioctl(s, SIOCGIFADDR, iface_b)[20:24])
-        nm = socket.inet_ntoa(fcntl.ioctl(s, SIOCGIFNETMASK, iface_b)[20:24])
-    except OSError as exc:
-        if exc.errno != errno.ENODEV:
-            raise
-        raise TFTPServerConfigurationError(
-                'Unknown network interface {}'.format(iface)) from exc
-    return ip, nm
-
 
 def get_max_udp_datagram_size():
     """Retrieve the maximum UDP datagram size allowed by the system."""
@@ -527,22 +504,21 @@ class TFTPServerGarbageCollector(threading.Thread):
 
 
 class TFTPServer(object):
-    def __init__(self, iface, root, port=_PTFTPD_DEFAULT_PORT,
+    def __init__(self, host_ip, root, port=_PTFTPD_DEFAULT_PORT,
                  strict_rfc1350=False, notification_callbacks=None):
 
         if notification_callbacks is None:
             notification_callbacks = {}
 
-        self.iface, self.root, self.port, self.strict_rfc1350 = \
-            iface, root, port, strict_rfc1350
+        self.host_ip, self.root, self.port, self.strict_rfc1350 = \
+            host_ip, root, port, strict_rfc1350
         self.client_registry = {}
 
         if not os.path.isdir(self.root):
             raise TFTPServerConfigurationError(
                 'The specified TFTP root does not exist')
 
-        self.ip, self.netmask = get_ip_config_for_iface(self.iface)
-        self.server = socketserver.UDPServer((self.ip, port),
+        self.server = socketserver.UDPServer((self.host_ip, port),
                                              TFTPServerHandler)
         self.server.root = self.root
         self.server.strict_rfc1350 = self.strict_rfc1350
@@ -553,8 +529,8 @@ class TFTPServer(object):
         notify.CallbackEngine.install(l, notification_callbacks)
 
     def serve_forever(self):
-        l.info('Serving TFTP requests on %s/%s:%d in %s',
-               self.iface, self.ip, self.port, self.root)
+        l.info('Serving TFTP requests on %s:%d in %s',
+               self.host_ip, self.port, self.root)
         self.cleanup_thread.start()
         self.server.serve_forever()
 
@@ -562,7 +538,7 @@ class TFTPServer(object):
 def main():
     import optparse
 
-    usage = 'Usage: %prog [options] <iface> <TFTP root>'
+    usage = 'Usage: %prog [options] <host_ip> <TFTP root>'
     parser = optparse.OptionParser(usage=usage)
     parser.add_option('-r', '--rfc1350', dest='strict_rfc1350',
                       action='store_true', default=False,
@@ -582,7 +558,7 @@ def main():
         parser.print_help()
         return 1
 
-    iface = args[0]
+    host_ip = args[0]
     root = os.path.abspath(args[1])
 
     # Setup notification logging
@@ -591,7 +567,7 @@ def main():
                                 fmt='%(levelname)s(%(name)s): %(message)s')
 
     try:
-        server = TFTPServer(iface, root, options.port, options.strict_rfc1350)
+        server = TFTPServer(host_ip, root, options.port, options.strict_rfc1350)
         server.serve_forever()
     except TFTPServerConfigurationError as e:
         sys.stderr.write('TFTP server configuration error: %s!' % e.args)
